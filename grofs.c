@@ -20,6 +20,11 @@
 
 #define GIT_OBJECT_ID_LEN GIT_OID_HEXSZ
 
+#define LOGIC_ERROR 64
+
+// Halts in case of a logic error because it's better to exit since we don't know what else could be wrong
+#define HALT(fmt, ...) fprintf(stderr, "ERROR [file: %s, line: %d]: " fmt, __FILE__, __LINE__, __VA_ARGS__); exit(LOGIC_ERROR)
+
 enum dir_entry_type {
     NONE, LIST, ID, PATH_IN_GIT, TREE, PARENT
 };
@@ -67,6 +72,8 @@ struct grofs_cli_opts {
 
 #define GROFS_STRUCT_OPT(tpl, field, value) { tpl, offsetof(struct grofs_cli_opts, field), value }
 
+static const char *root_child_type_to_str(enum root_child_type type);
+static char *path_spec_full_path(const struct path_spec *path_spec);
 static const char *path_spec_blob_name(const struct path_spec *path_spec);
 static const char *path_spec_blob_name(const struct path_spec *path_spec);
 static char *path_spec_git_path(const struct path_spec *path_spec);
@@ -76,6 +83,7 @@ static int count_char_in_string(const char *str, char needle);
 static int parse_path_info_resolve_root_child(enum root_child_type *root_child_type, const char *part);
 static int path_parse_commit_sub_path(struct path_spec *path_spec, int level);
 static int path_parse_blob_sub_path(struct path_spec *path_spec, int level);
+static char *path_spec_full_path(const struct path_spec *path_spec);
 static int parse_path_init_dir_entry_type(struct path_spec *path_spec);
 static int parse_path_as_root(struct path_spec **path_spec);
 static int path_parse_as_root_child(struct path_spec *path_spec);
@@ -129,6 +137,30 @@ static struct fuse_opt grofs_fuse_opts[] = {
     FUSE_OPT_END
 };
 
+static const char *root_child_type_to_str(enum root_child_type type) {
+    switch (type) {
+        case ROOT:
+            return "ROOT";
+        case COMMIT:
+            return "COMMIT";
+        case BLOB:
+            return "BLOB";
+        default:
+            HALT("Unknown %d", type);
+    }
+}
+
+static const char *grofs_node_type_to_str(enum grofs_node_type type) {
+    switch (type) {
+        case DIR:
+            return "DIR";
+        case DATA:
+            return "DATA";
+        default:
+            HALT("Unknown %d", type);
+    }
+}
+
 static const char *path_spec_commit_name(const struct path_spec *path_spec) {
     return path_spec->parts[1];
 }
@@ -168,6 +200,32 @@ static char *path_spec_git_path(const struct path_spec *path_spec) {
     return buff;
 }
 
+static char *path_spec_full_path(const struct path_spec *path_spec) {
+    if (0 == path_spec->parts_count) {
+        return "/";
+    }
+
+    char *last_part = path_spec->parts[path_spec->parts_count - 1];
+
+    void *parts_buff_end = last_part + strlen(last_part) + 1;
+
+    int len = (int) (parts_buff_end - (void *) path_spec->buff);
+
+    char *buff = (char *) malloc(sizeof(char) * (1 + len));
+
+    *buff = '/';
+    memcpy(buff + 1, path_spec->buff, sizeof(char) * len);
+
+    int i;
+
+    for (i = 1; i < len - 1; i++) {
+        if ('\0' == *(buff + 1 + i)) {
+            *(buff + 1 + i) = '/';
+        }
+    }
+
+    return buff;
+}
 
 static inline int min(int a, int b) {
     return a < b ? a : b;
@@ -286,6 +344,8 @@ static int parse_path_init_dir_entry_type(struct path_spec *path_spec) {
             return path_parse_commit_sub_path(path_spec, level);
         case  BLOB:
             return path_parse_blob_sub_path(path_spec, level);
+        default:
+            HALT("Unexpected %s for path %s", root_child_type_to_str(root_child_type), path_spec_full_path(path_spec));
     }
 
     return ENOENT;
@@ -539,7 +599,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
             git_blob_free(blob);
             break;
         default:
-            exit(1); // @todo: something better
+            HALT("Unexpected %s (sha1 %s)", git_object_type2string(git_tree_entry_type(tree_entry)), git_oid_tostr_s(git_tree_entry_id(tree_entry)));
     }
 
     git_tree_entry_free(tree_entry);
@@ -607,6 +667,8 @@ static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struc
             ret = grofs_resolve_node_for_path_spec_for_blob_type(node, path_spec);
 
             break;
+        default:
+            HALT("Unexpected %s for path %s", root_child_type_to_str(path_spec->root_child_type), path_spec_full_path(path_spec));
     }
 
     return ret;
@@ -666,7 +728,7 @@ static int grofs_getattr(const char *path, struct stat *stat) {
 
             break;
         default:
-            exit(1); // @todo: something better
+            HALT("Unexpected %s for path %s", grofs_node_type_to_str(node->type), path);
     }
 
     free(node);
