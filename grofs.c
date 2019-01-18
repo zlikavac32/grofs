@@ -100,7 +100,7 @@ static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *nod
 static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec);
 static int grofs_resolve_node_for_path(struct grofs_node **node, const char *path);
 static int grofs_getattr(const char *path, struct stat *stat);
-int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload);
+static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload);
 static int grofs_readdir_from_git_tree(const git_tree *tree, void *buffer, fuse_fill_dir_t filler);
 static int grofs_readdir_from_git_tree_oid(const git_oid *oid, void *buffer, fuse_fill_dir_t filler);
 static int grofs_readdir_for_commit_list(void *buffer, fuse_fill_dir_t filler);
@@ -736,7 +736,7 @@ static int grofs_getattr(const char *path, struct stat *stat) {
     return ret;
 }
 
-int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload) {
+static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload) {
     git_object *obj;
 
     struct grofs_readdir_context *context = (struct grofs_readdir_context *) payload;
