@@ -39,7 +39,6 @@ Some more rules
 - files representing blob have their size set to the size of raw blob content
 - folders representing commits (like `commit1-sha1` in the example above) have commit time as their create and modified time
 - every other file system item has `grofs` start time as create and modified time
-- FUSE is run in the single-threaded mode
 
 ## Further development
 

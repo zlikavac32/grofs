@@ -452,23 +452,23 @@ static int parse_path(struct path_spec **path_spec, const char *path) {
 }
 
 static void cleanup_on_exit_cb() {
-    if (NULL != repo_path) {
-        free(repo_path);
-
-        repo_path = NULL;
-    }
-
     if (NULL != repo) {
         git_repository_free(repo);
 
         repo = NULL;
     }
 
+    git_libgit2_shutdown();
+
+    if (NULL != repo_path) {
+        free(repo_path);
+
+        repo_path = NULL;
+    }
+
     if (args.argc > 0) {
         fuse_opt_free_args(&args);
     }
-
-    git_libgit2_shutdown();
 }
 
 static int fuse_args_process_cb(void *data, const char *arg, int key, struct fuse_args *out_args) {
@@ -1045,8 +1045,6 @@ int main(int argc, char **argv) {
 
         return 1;
     }
-
-    fuse_opt_add_arg(&args, "-s"); // for now force single threaded
 
     return fuse_main(args.argc, args.argv, &fuse_operations, NULL);
 }
