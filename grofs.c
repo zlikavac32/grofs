@@ -794,10 +794,11 @@ static int grofs_readdir_from_git_tree_oid(const git_oid *oid, void *buffer, fus
 }
 
 static int grofs_readdir_for_commit_list(void *buffer, fuse_fill_dir_t filler) {
-    struct grofs_readdir_context context;
-    context.filler = filler;
-    context.buffer = buffer;
-    context.wanted_type = GIT_OBJ_COMMIT;
+    struct grofs_readdir_context context = {
+        .filler = filler,
+        .buffer = buffer,
+        .wanted_type = GIT_OBJ_COMMIT
+    };
 
     git_odb *odb;
     git_repository_odb(&odb, repo);
@@ -810,10 +811,11 @@ static int grofs_readdir_for_commit_list(void *buffer, fuse_fill_dir_t filler) {
 }
 
 static int grofs_readdir_for_blob_list(void *buffer, fuse_fill_dir_t filler) {
-    struct grofs_readdir_context context;
-    context.filler = filler;
-    context.buffer = buffer;
-    context.wanted_type = GIT_OBJ_BLOB;
+    struct grofs_readdir_context context = {
+        .filler = filler,
+        .buffer = buffer,
+        .wanted_type = GIT_OBJ_BLOB
+    };
 
     git_odb *odb;
     git_repository_odb(&odb, repo);
@@ -1006,7 +1008,10 @@ int main(int argc, char **argv) {
     args.argv = argv;
     args.allocated = 0;
 
-    struct grofs_cli_opts cli_opts = {0, 0};
+    struct grofs_cli_opts cli_opts = {
+        .show_version = 0,
+        .show_help = 0
+    };
 
     if(fuse_opt_parse(&args, &cli_opts, grofs_fuse_opts, fuse_args_process_cb) == -1) {
         fprintf(stderr, "Failed to parse options");
