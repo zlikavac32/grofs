@@ -768,6 +768,12 @@ static int grofs_readdir_from_git_tree(const git_tree *tree, void *buffer, fuse_
             return 1;
         }
 
+        git_otype entry_type = git_tree_entry_type(entry);
+
+        if (GIT_OBJ_BLOB != entry_type && GIT_OBJ_TREE != entry_type) {
+            continue ;
+        }
+
         filler(buffer, git_tree_entry_name(entry), NULL, 0);
     }
 
