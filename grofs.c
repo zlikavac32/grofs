@@ -9,7 +9,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <threads.h>
-#include <signal.h>
+#include <fcntl.h>
 
 #define FUSE_USE_VERSION 30
 
@@ -87,6 +87,7 @@ struct grofs_readdir_thread_data {
     int fd;
     void (*iter) (int fd, void *);
     void *iter_payload; // must be a valid pointer to be freed later or NULL
+    int should_stop;
 };
 
 struct grofs_dir_handle {
@@ -138,7 +139,6 @@ static int grofs_opendir(const char *path, struct fuse_file_info *file_info);
 static int grofs_fill_from_dir_handle(struct grofs_dir_handle *dir_handle, void *buffer, fuse_fill_dir_t filler);
 static void grofs_buff_align_to_start(struct grofs_buff *buff);
 static int grofs_buff_realloc(struct grofs_buff *buff);
-static void grofs_signal_handler(int sig);
 static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec);
 static int grofs_resolve_node_for_path(struct grofs_node **node, const char *path);
 static int grofs_getattr(const char *path, struct stat *stat);
@@ -148,6 +148,7 @@ static int grofs_open_node_commit_parent(const git_oid *oid, struct fuse_file_in
 static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_info);
 static int grofs_open_node(const struct grofs_node *node, struct fuse_file_info *file_info);
 static int grofs_open(const char *path, struct fuse_file_info *file_info);
+static void grofs_releasedir_close_thread(int read_fd, pthread_t read_thr, struct grofs_readdir_thread_data *thread_data);
 static int grofs_read(const char *path, char *buff, size_t size, off_t offset, struct fuse_file_info *file_info);
 static int grofs_opendir(const char *path, struct fuse_file_info *file_info);
 static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *file_info);
@@ -160,7 +161,7 @@ static git_repository *repo = NULL;
 static time_t started_time;
 struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
 
-thread_local int should_stop_local = 0;
+thread_local int *should_stop_local;
 
 struct fuse_operations fuse_operations = {
     .getattr	= grofs_getattr,
@@ -792,7 +793,7 @@ static int grofs_getattr(const char *path, struct stat *stat) {
 }
 
 static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
-    if (should_stop_local) {
+    if (*should_stop_local) {
         return ECANCELED;
     }
 
@@ -805,7 +806,12 @@ static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
     return 0;
 }
 
+// Returns negative because of https://github.com/libgit2/libgit2/issues/4946
 static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload) {
+    if (*should_stop_local) {
+        return -ECANCELED;
+    }
+
     git_object *obj;
 
     struct grofs_readdir_context *context = (struct grofs_readdir_context *) payload;
@@ -818,7 +824,7 @@ static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload)
 
     git_oid_tostr(sha, GIT_OID_HEXSZ + 1, id);
 
-    int ret = grofs_write_bin_with_local_cancel(context->fd, sha);
+    int ret = -grofs_write_bin_with_local_cancel(context->fd, sha);
 
     git_object_free(obj);
 
@@ -916,9 +922,9 @@ static void grofs_dir_iter_for_blob_list_tree_oid(int fd, void *iter_payload) {
 }
 
 static void *grofs_readdir_thread(void *data) {
-    pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
-
     struct grofs_readdir_thread_data *thread_data = (struct grofs_readdir_thread_data *) data;
+
+    should_stop_local = &thread_data->should_stop;
 
     if (grofs_write_bin_with_local_cancel(thread_data->fd, ".")) {
         close(thread_data->fd);
@@ -940,6 +946,8 @@ static void *grofs_readdir_thread(void *data) {
 }
 
 static int grofs_open_dir_create_thread_data(struct grofs_readdir_thread_data *thread_data, const struct grofs_node *node) {
+    thread_data->should_stop = 0;
+
     if (ROOT == node->root_child_type) {
         thread_data->iter = grofs_dir_iter_root;
 
@@ -1143,7 +1151,6 @@ static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
     struct grofs_dir_handle *dir_handle = (struct grofs_dir_handle *) file_info->fh;
 
     if (dir_handle->last_offset != offset) {
-        HALT("Did not expect this here");
         return -EBADF;
     }
 
@@ -1176,12 +1183,17 @@ static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler,
     return ret;
 }
 
-static void grofs_signal_handler(int sig) {
-    if (SIGUSR1 != sig) {
-        return ;
-    }
+static void grofs_releasedir_close_thread(int read_fd, pthread_t read_thr, struct grofs_readdir_thread_data *thread_data) {
+    thread_data->should_stop = 1;
 
-    should_stop_local = 1;
+    fcntl(read_fd, F_SETFL, fcntl(read_fd, F_GETFL) | O_NONBLOCK);
+
+    char buff[4096];
+
+    // @todo: would semaphores work better?
+    while (read(read_fd, buff, 4096) > 0);
+
+    pthread_join(read_thr, NULL);
 }
 
 static int grofs_releasedir(const char *path, struct fuse_file_info *file_info) {
@@ -1197,9 +1209,7 @@ static int grofs_releasedir(const char *path, struct fuse_file_info *file_info) 
         free(dir_handle->buff.data);
     }
 
-    pthread_kill(dir_handle->read_thr, SIGUSR1);
-
-    pthread_join(dir_handle->read_thr, NULL);
+    grofs_releasedir_close_thread(dir_handle->fd, dir_handle->read_thr, &dir_handle->thread_data);
 
     close(dir_handle->fd);
 
@@ -1329,8 +1339,6 @@ static void grofs_print_help(const char *bin_path) {
 
 int main(int argc, char **argv) {
     started_time = time(NULL);
-
-    signal(SIGUSR1, grofs_signal_handler);
 
     git_libgit2_init();
 
