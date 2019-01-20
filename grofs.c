@@ -103,6 +103,7 @@ struct grofs_dir_handle {
 
 static const char *root_child_type_to_str(enum root_child_type type);
 static char *path_spec_full_path(const struct path_spec *path_spec);
+static char *path_spec_sub_path(const struct path_spec *path_spec, int start_part);
 static const char *path_spec_blob_name(const struct path_spec *path_spec);
 static char *path_spec_git_path(const struct path_spec *path_spec);
 static inline int min(int a, int b);
@@ -206,67 +207,73 @@ static const char *grofs_node_type_to_str(enum grofs_node_type type) {
 }
 
 static const char *path_spec_commit_name(const struct path_spec *path_spec) {
+    if (path_spec->parts_count < 2 || COMMIT != path_spec->root_child_type) {
+        return NULL;
+    }
+
     return path_spec->parts[1];
 }
 
 static const char *path_spec_blob_name(const struct path_spec *path_spec) {
-    return path_spec->parts[1];
-}
-
-static char *path_spec_git_path(const struct path_spec *path_spec) {
-    if (path_spec->parts_count < 4) {
+    if (path_spec->parts_count < 2 || BLOB != path_spec->root_child_type) {
         return NULL;
     }
 
-    int count = 0;
-    int i;
+    return path_spec->parts[1];
+}
 
-    for (i = 3; i < path_spec->parts_count; i++) {
-        count += strlen(path_spec->parts[i]) + 1;
+static char *path_spec_sub_path(const struct path_spec *path_spec, int start_part) {
+    if (start_part < 0 || start_part >= path_spec->parts_count) {
+        return NULL;
     }
 
-    char *buff = (char *) malloc(sizeof(char) * count);
+    size_t path_len = 1;
+
+    char *last_part = path_spec->parts[path_spec->parts_count - 1];
+
+    void *parts_buff_end = last_part + strlen(last_part);
+
+    path_len += (parts_buff_end - (void *) *(path_spec->parts + start_part));
+
+    char *buff = (char *) malloc(sizeof(char) * (path_len + 1));
 
     if (NULL == buff) {
         return NULL;
     }
 
-    buff[0] = '\0';
+    *buff = '/';
+    *(buff + 1) = '\0';
 
-    for (i = 3; i < path_spec->parts_count; i++) {
-        strcat(buff, path_spec->parts[i]);
+    memcpy(buff + 1, *(path_spec->parts + start_part), sizeof(char) * (path_len - 1 + 1));
 
-        if (i + 1 < path_spec->parts_count) {
-            strcat(buff, "/");
+    size_t i;
+
+    for (i = 1; i < path_len; i++) {
+        if ('\0' == *(buff + i)) {
+            *(buff + i) = '/';
         }
     }
 
     return buff;
 }
 
+static char *path_spec_git_path(const struct path_spec *path_spec) {
+    return path_spec_sub_path(path_spec, 3);
+}
+
 static char *path_spec_full_path(const struct path_spec *path_spec) {
-    if (0 == path_spec->parts_count) {
-        return "/";
+    if (path_spec->parts_count > 0) {
+        return path_spec_sub_path(path_spec, 0);
     }
 
-    char *last_part = path_spec->parts[path_spec->parts_count - 1];
+    char *buff = (char *) malloc(sizeof(char) * (1 + 1));
 
-    void *parts_buff_end = last_part + strlen(last_part) + 1;
-
-    int len = (int) (parts_buff_end - (void *) path_spec->buff);
-
-    char *buff = (char *) malloc(sizeof(char) * (1 + len));
+    if (NULL == buff) {
+        return NULL;
+    }
 
     *buff = '/';
-    memcpy(buff + 1, path_spec->buff, sizeof(char) * len);
-
-    int i;
-
-    for (i = 1; i < len - 1; i++) {
-        if ('\0' == *(buff + 1 + i)) {
-            *(buff + 1 + i) = '/';
-        }
-    }
+    *(buff + 1) = '\0';
 
     return buff;
 }
@@ -614,7 +621,13 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
 
     char *path = path_spec_git_path(path_spec);
 
-    if (git_tree_entry_bypath(&tree_entry, tree, path) != 0) {
+    if (NULL == path) {
+        git_tree_free(tree);
+
+        return -ENOENT;
+    }
+
+    if (git_tree_entry_bypath(&tree_entry, tree, path + 1) != 0) {
         free(path);
 
         git_tree_free(tree);
