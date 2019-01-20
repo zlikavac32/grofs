@@ -1266,6 +1266,10 @@ static int grofs_open_node(const struct grofs_node *node, struct fuse_file_info 
 }
 
 static int grofs_open(const char *path, struct fuse_file_info *file_info) {
+    if (file_info->flags & (O_WRONLY | O_RDWR)) {
+        return -EROFS;
+    }
+
     struct grofs_node *node;
 
     if (grofs_resolve_node_for_path(&node, path) != 0) {
