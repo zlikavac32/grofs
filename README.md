@@ -43,5 +43,4 @@ Some more rules
 ## Further development
 
 - Possibility to specify remote which is exposed
-- Incremental directory reads
 - More virtualized files/folders like commit author, message, etc.
