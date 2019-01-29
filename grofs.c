@@ -16,37 +16,37 @@
 
 #include <fuse.h>
 
-#define STR_COMMITS "commits"
-#define STR_BLOBS "blobs"
-#define STR_TREE "tree"
-#define STR_PARENT "parent"
+#define GROFS_STR_COMMITS "commits"
+#define GROFS_STR_BLOBS "blobs"
+#define GROFS_STR_TREE "tree"
+#define GROFS_STR_PARENT "parent"
 
-#define VERSION "0.1.0-alpha"
+#define GROFS_VERSION "0.1.0-alpha"
 
-#define GIT_OBJECT_ID_LEN GIT_OID_HEXSZ
+#define GROFS_GIT_OBJECT_ID_LEN GIT_OID_HEXSZ
 
-#define LOGIC_ERROR 64
+#define GROFS_LOGIC_ERROR 64
 
 // Halts in case of a logic error because it's better to exit since we don't know what else could be wrong
-#define HALT_FMT(fmt, ...) fprintf(stderr, "ERROR [file: %s, line: %d]: " fmt, __FILE__, __LINE__, __VA_ARGS__); exit(LOGIC_ERROR)
-#define HALT(fmt) HALT_FMT(fmt "%s", "")
+#define GROFS_HALT_FMT(fmt, ...) fprintf(stderr, "ERROR [file: %s, line: %d]: " fmt, __FILE__, __LINE__, __VA_ARGS__); exit(GROFS_LOGIC_ERROR)
+#define GROFS_HALT(fmt) GROFS_HALT_FMT(fmt "%s", "")
 
 #define FUSE_ERR(r) -(r)
 
-enum dir_entry_type {
+enum grofs_dir_entry_type {
     NONE, LIST, ID, PATH_IN_GIT, TREE, PARENT
 };
 
-enum root_child_type {
+enum grofs_root_child_type {
     ROOT, COMMIT, BLOB
 };
 
-struct path_spec {
+struct grofs_path_spec {
     char *buff;
     char **parts;
     int parts_count;
-    enum dir_entry_type entry_type;
-    enum root_child_type root_child_type;
+    enum grofs_dir_entry_type entry_type;
+    enum grofs_root_child_type root_child_type;
 };
 
 enum grofs_node_type {
@@ -55,8 +55,8 @@ enum grofs_node_type {
 
 struct grofs_node {
     enum grofs_node_type type;
-    enum dir_entry_type entry_type;
-    enum root_child_type root_child_type;
+    enum grofs_dir_entry_type entry_type;
+    enum grofs_root_child_type root_child_type;
     git_oid oid;
     time_t time;
     size_t size;
@@ -104,30 +104,30 @@ struct grofs_dir_handle {
 
 #define GROFS_READDIR_BUFF_LEN 64
 
-static const char *root_child_type_to_str(enum root_child_type type);
-static char *path_spec_full_path(const struct path_spec *path_spec);
-static char *path_spec_sub_path(const struct path_spec *path_spec, int start_part);
-static const char *path_spec_blob_name(const struct path_spec *path_spec);
-static char *path_spec_git_path(const struct path_spec *path_spec);
-static inline int min(int a, int b);
-static void free_path_spec(struct path_spec *path_spec);
-static int count_char_in_string(const char *str, char needle);
-static int parse_path_info_resolve_root_child(enum root_child_type *root_child_type, const char *part);
-static int path_parse_commit_sub_path(struct path_spec *path_spec, int level);
-static int path_parse_blob_sub_path(struct path_spec *path_spec, int level);
-static int parse_path_init_dir_entry_type(struct path_spec *path_spec);
-static int parse_path_as_root(struct path_spec **path_spec);
-static int path_parse_as_root_child(struct path_spec *path_spec);
-static int parse_path(struct path_spec **path_spec, const char *path);
-static void cleanup_on_exit_cb();
-static int fuse_args_process_cb(void *data, const char *arg, int key, struct fuse_args *out_args);
+static const char *grofs_root_child_type_to_str(enum grofs_root_child_type type);
+static char *grofs_path_spec_full_path(const struct grofs_path_spec *path_spec);
+static char *grofs_path_spec_sub_path(const struct grofs_path_spec *path_spec, int start_part);
+static const char *grofs_path_spec_blob_name(const struct grofs_path_spec *path_spec);
+static char *grofs_path_spec_git_path(const struct grofs_path_spec *path_spec);
+static inline int grofs_min(int a, int b);
+static void grofs_free_path_spec(struct grofs_path_spec *path_spec);
+static int grofs_count_char_in_string(const char *str, char needle);
+static int grofs_parse_path_info_resolve_root_child(enum grofs_root_child_type *root_child_type, const char *part);
+static int grofs_path_parse_commit_sub_path(struct grofs_path_spec *path_spec, int level);
+static int grofs_path_parse_blob_sub_path(struct grofs_path_spec *path_spec, int level);
+static int grofs_parse_path_init_dir_entry_type(struct grofs_path_spec *path_spec);
+static int grofs_parse_path_as_root(struct grofs_path_spec **path_spec);
+static int grofs_path_parse_as_root_child(struct grofs_path_spec *path_spec);
+static int grofs_parse_path(struct grofs_path_spec **path_spec, const char *path);
+static void grofs_cleanup_on_exit_cb();
+static int grofs_fuse_args_process_cb(void *data, const char *arg, int key, struct fuse_args *out_args);
 static int grofs_git_commit_parent_lookup(const git_oid *commit_oid, git_oid *parent_oid);
 static int grofs_git_commit_has_parent(const git_oid *commit_oid);
 static void grofs_getattr_init_stat_as_dir(struct stat *stat, time_t started_time);
 static void grofs_getattr_init_stat_as_file(struct stat *stat, time_t started_time, int size);
-static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_node *node, const git_commit *commit, const struct path_spec *path_spec);
-static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *node, const struct path_spec *path_spec);
-static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *node, const struct path_spec *path_spec);
+static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_node *node, const git_commit *commit, const struct grofs_path_spec *path_spec);
+static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *node, const struct grofs_path_spec *path_spec);
+static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *node, const struct grofs_path_spec *path_spec);
 static int grofs_node_init_from_path(struct grofs_node *node, const char *path);
 static int grofs_write_bin_with_local_cancel(int fd, const char *data);
 static void grofs_dir_iter_root(int fd, void *iter_payload);
@@ -142,7 +142,7 @@ static int grofs_opendir_create_dir_handle_from_node(struct grofs_dir_handle **d
 static int grofs_fill_from_dir_handle(struct grofs_dir_handle *dir_handle, void *buffer, fuse_fill_dir_t filler);
 static void grofs_buff_align_to_start(struct grofs_buff *buff);
 static int grofs_buff_realloc(struct grofs_buff *buff);
-static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec);
+static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct grofs_path_spec *path_spec);
 static int grofs_resolve_node_for_path(struct grofs_node **node, const char *path);
 static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload);
 static struct grofs_file_handle *grofs_file_nandle_new(int buff_len);
@@ -160,14 +160,14 @@ static int grofs_open(const char *path, struct fuse_file_info *file_info);
 static int grofs_read(const char *path, char *buff, size_t size, off_t offset, struct fuse_file_info *file_info);
 static int grofs_release(const char* path, struct fuse_file_info *file_info);
 
-static char *repo_path = NULL;
-static git_repository *repo = NULL;
-static time_t started_time;
-struct fuse_args args = FUSE_ARGS_INIT(0, NULL);
+static char *grofs_repo_path = NULL;
+static git_repository *grofs_repo = NULL;
+static time_t grofs_started_time;
+struct fuse_args grofs_args = FUSE_ARGS_INIT(0, NULL);
 
-thread_local int *should_stop_local;
+thread_local int *grofs_should_stop_local;
 
-struct fuse_operations fuse_operations = {
+struct fuse_operations grofs_fuse_operations = {
     .getattr	= grofs_getattr,
     .opendir	= grofs_opendir,
     .readdir	= grofs_readdir,
@@ -185,7 +185,7 @@ static struct fuse_opt grofs_fuse_opts[] = {
     FUSE_OPT_END
 };
 
-static const char *root_child_type_to_str(enum root_child_type type) {
+static const char *grofs_root_child_type_to_str(enum grofs_root_child_type type) {
     switch (type) {
         case ROOT:
             return "ROOT";
@@ -194,7 +194,7 @@ static const char *root_child_type_to_str(enum root_child_type type) {
         case BLOB:
             return "BLOB";
         default:
-            HALT_FMT("Unknown %d", type);
+            GROFS_HALT_FMT("Unknown %d", type);
     }
 }
 
@@ -205,11 +205,11 @@ static const char *grofs_node_type_to_str(enum grofs_node_type type) {
         case DATA:
             return "DATA";
         default:
-            HALT_FMT("Unknown %d", type);
+            GROFS_HALT_FMT("Unknown %d", type);
     }
 }
 
-static const char *path_spec_commit_name(const struct path_spec *path_spec) {
+static const char *path_spec_commit_name(const struct grofs_path_spec *path_spec) {
     if (path_spec->parts_count < 2 || COMMIT != path_spec->root_child_type) {
         return NULL;
     }
@@ -217,7 +217,7 @@ static const char *path_spec_commit_name(const struct path_spec *path_spec) {
     return path_spec->parts[1];
 }
 
-static const char *path_spec_blob_name(const struct path_spec *path_spec) {
+static const char *grofs_path_spec_blob_name(const struct grofs_path_spec *path_spec) {
     if (path_spec->parts_count < 2 || BLOB != path_spec->root_child_type) {
         return NULL;
     }
@@ -225,7 +225,7 @@ static const char *path_spec_blob_name(const struct path_spec *path_spec) {
     return path_spec->parts[1];
 }
 
-static char *path_spec_sub_path(const struct path_spec *path_spec, int start_part) {
+static char *grofs_path_spec_sub_path(const struct grofs_path_spec *path_spec, int start_part) {
     if (start_part < 0 || start_part >= path_spec->parts_count) {
         return NULL;
     }
@@ -260,13 +260,13 @@ static char *path_spec_sub_path(const struct path_spec *path_spec, int start_par
     return buff;
 }
 
-static char *path_spec_git_path(const struct path_spec *path_spec) {
-    return path_spec_sub_path(path_spec, 3);
+static char *grofs_path_spec_git_path(const struct grofs_path_spec *path_spec) {
+    return grofs_path_spec_sub_path(path_spec, 3);
 }
 
-static char *path_spec_full_path(const struct path_spec *path_spec) {
+static char *grofs_path_spec_full_path(const struct grofs_path_spec *path_spec) {
     if (path_spec->parts_count > 0) {
-        return path_spec_sub_path(path_spec, 0);
+        return grofs_path_spec_sub_path(path_spec, 0);
     }
 
     char *buff = (char *) malloc(sizeof(char) * (1 + 1));
@@ -281,15 +281,15 @@ static char *path_spec_full_path(const struct path_spec *path_spec) {
     return buff;
 }
 
-static inline int min(int a, int b) {
+static inline int grofs_min(int a, int b) {
     return a < b ? a : b;
 }
 
-static void free_path_spec(struct path_spec *path_spec) {
+static void grofs_free_path_spec(struct grofs_path_spec *path_spec) {
     free(path_spec);
 }
 
-static int count_char_in_string(const char *str, char needle) {
+static int grofs_count_char_in_string(const char *str, char needle) {
     int count = 0;
 
     for (; *str; count += needle == *str, str++);
@@ -297,14 +297,14 @@ static int count_char_in_string(const char *str, char needle) {
     return count;
 }
 
-static int parse_path_info_resolve_root_child(enum root_child_type *root_child_type, const char *part) {
-    if (strcmp(STR_COMMITS, part) == 0) {
+static int grofs_parse_path_info_resolve_root_child(enum grofs_root_child_type *root_child_type, const char *part) {
+    if (strcmp(GROFS_STR_COMMITS, part) == 0) {
         *root_child_type = COMMIT;
 
         return 0;
     }
 
-    if (strcmp(STR_BLOBS, part) == 0) {
+    if (strcmp(GROFS_STR_BLOBS, part) == 0) {
         *root_child_type = BLOB;
 
         return 0;
@@ -313,12 +313,12 @@ static int parse_path_info_resolve_root_child(enum root_child_type *root_child_t
     return 1;
 }
 
-static int path_parse_commit_sub_path(struct path_spec *path_spec, int level) {
+static int grofs_path_parse_commit_sub_path(struct grofs_path_spec *path_spec, int level) {
     char *ref;
 
     ref = path_spec->parts[level];
 
-    if (strlen(ref) != GIT_OBJECT_ID_LEN) {
+    if (strlen(ref) != GROFS_GIT_OBJECT_ID_LEN) {
         return ENOENT;
     }
 
@@ -330,7 +330,7 @@ static int path_parse_commit_sub_path(struct path_spec *path_spec, int level) {
 
     char *commit_dir_item = path_spec->parts[level];
 
-    if (strcmp(STR_TREE, commit_dir_item) == 0) {
+    if (strcmp(GROFS_STR_TREE, commit_dir_item) == 0) {
         if (++level == path_spec->parts_count) {
             path_spec->entry_type = TREE;
 
@@ -340,7 +340,7 @@ static int path_parse_commit_sub_path(struct path_spec *path_spec, int level) {
         path_spec->entry_type = PATH_IN_GIT;
 
         return 0;
-    } else if (strcmp(STR_PARENT, commit_dir_item) == 0) {
+    } else if (strcmp(GROFS_STR_PARENT, commit_dir_item) == 0) {
         if (++level == path_spec->parts_count) {
             path_spec->entry_type = PARENT;
 
@@ -351,12 +351,12 @@ static int path_parse_commit_sub_path(struct path_spec *path_spec, int level) {
     return ENOENT;
 }
 
-static int path_parse_blob_sub_path(struct path_spec *path_spec, int level) {
+static int grofs_path_parse_blob_sub_path(struct grofs_path_spec *path_spec, int level) {
     char *ref;
 
     ref = path_spec->parts[level];
 
-    if (strlen(ref) != GIT_OBJECT_ID_LEN) {
+    if (strlen(ref) != GROFS_GIT_OBJECT_ID_LEN) {
         return ENOENT;
     }
 
@@ -369,7 +369,7 @@ static int path_parse_blob_sub_path(struct path_spec *path_spec, int level) {
     return ENOENT;
 }
 
-static int parse_path_init_dir_entry_type(struct path_spec *path_spec) {
+static int grofs_parse_path_init_dir_entry_type(struct grofs_path_spec *path_spec) {
     int level = 0;
 
     if (level == path_spec->parts_count) {
@@ -379,9 +379,9 @@ static int parse_path_init_dir_entry_type(struct path_spec *path_spec) {
         return 0;
     }
 
-    enum root_child_type root_child_type;
+    enum grofs_root_child_type root_child_type;
 
-    if (parse_path_info_resolve_root_child(&root_child_type, path_spec->parts[level]) != 0) {
+    if (grofs_parse_path_info_resolve_root_child(&root_child_type, path_spec->parts[level]) != 0) {
         return ENOENT;
     }
 
@@ -395,20 +395,20 @@ static int parse_path_init_dir_entry_type(struct path_spec *path_spec) {
 
     switch (root_child_type) {
         case COMMIT:
-            return path_parse_commit_sub_path(path_spec, level);
+            return grofs_path_parse_commit_sub_path(path_spec, level);
         case  BLOB:
-            return path_parse_blob_sub_path(path_spec, level);
+            return grofs_path_parse_blob_sub_path(path_spec, level);
         default:
-            HALT_FMT("Unexpected %s for path %s", root_child_type_to_str(root_child_type), path_spec_full_path(path_spec));
+            GROFS_HALT_FMT("Unexpected %s for path %s", grofs_root_child_type_to_str(root_child_type), grofs_path_spec_full_path(path_spec));
     }
 
     return ENOENT;
 }
 
-static int parse_path_as_root(struct path_spec **path_spec) {
-    struct path_spec *new_path_spec = NULL;
+static int grofs_parse_path_as_root(struct grofs_path_spec **path_spec) {
+    struct grofs_path_spec *new_path_spec = NULL;
 
-    new_path_spec = (struct path_spec *) malloc(sizeof(struct path_spec));
+    new_path_spec = (struct grofs_path_spec *) malloc(sizeof(struct grofs_path_spec));
 
     if (NULL == new_path_spec) {
         return ENOMEM;
@@ -418,12 +418,12 @@ static int parse_path_as_root(struct path_spec **path_spec) {
     new_path_spec->buff = NULL;
     new_path_spec->parts_count = 0;
 
-    int path_parse_result = -parse_path_init_dir_entry_type(new_path_spec);
+    int grofs_path_parse_result = -grofs_parse_path_init_dir_entry_type(new_path_spec);
 
-    if (0 != path_parse_result) {
+    if (0 != grofs_path_parse_result) {
         free(new_path_spec);
 
-        return path_parse_result;
+        return grofs_path_parse_result;
     }
 
     *path_spec = new_path_spec;
@@ -431,7 +431,7 @@ static int parse_path_as_root(struct path_spec **path_spec) {
     return 0;
 }
 
-static int path_parse_as_root_child(struct path_spec *path_spec) {
+static int grofs_path_parse_as_root_child(struct grofs_path_spec *path_spec) {
     char **parts = path_spec->parts;
 
     char *start = path_spec->buff;
@@ -459,10 +459,10 @@ static int path_parse_as_root_child(struct path_spec *path_spec) {
 
     parts[i++] = start;
 
-    return parse_path_init_dir_entry_type(path_spec);
+    return grofs_parse_path_init_dir_entry_type(path_spec);
 }
 
-static int parse_path(struct path_spec **path_spec, const char *path) {
+static int grofs_parse_path(struct grofs_path_spec **path_spec, const char *path) {
     int path_len = strlen(path);
 
     if (0 == path_len || '/' != *path) {
@@ -470,34 +470,34 @@ static int parse_path(struct path_spec **path_spec, const char *path) {
     }
 
     if (strcmp(path, "/") == 0) {
-        return parse_path_as_root(path_spec);
+        return grofs_parse_path_as_root(path_spec);
     }
 
-    struct path_spec *new_path_spec = NULL;
+    struct grofs_path_spec *new_path_spec = NULL;
 
-    int parts_count = count_char_in_string(path, '/');
+    int parts_count = grofs_count_char_in_string(path, '/');
 
     // keep it all as one chunk of memory
-    void *buff = malloc(sizeof(struct path_spec) + parts_count * sizeof(char *) + strlen(path) * sizeof(char));
+    void *buff = malloc(sizeof(struct grofs_path_spec) + parts_count * sizeof(char *) + strlen(path) * sizeof(char));
 
     if (NULL == buff) {
         return ENOMEM;
     }
 
-    new_path_spec = (struct path_spec *) buff;
-    new_path_spec->parts = (char **) (buff + sizeof(struct path_spec));
-    new_path_spec->buff = (char *) (buff + sizeof(struct path_spec) + parts_count * sizeof(char *));
+    new_path_spec = (struct grofs_path_spec *) buff;
+    new_path_spec->parts = (char **) (buff + sizeof(struct grofs_path_spec));
+    new_path_spec->buff = (char *) (buff + sizeof(struct grofs_path_spec) + parts_count * sizeof(char *));
 
     memcpy(new_path_spec->buff, path + 1, path_len * sizeof(char));
 
     new_path_spec->parts_count = parts_count;
 
-    int path_parse_result = path_parse_as_root_child(new_path_spec);
+    int grofs_path_parse_result = grofs_path_parse_as_root_child(new_path_spec);
 
-    if (0 != path_parse_result) {
+    if (0 != grofs_path_parse_result) {
         free(new_path_spec);
 
-        return path_parse_result;
+        return grofs_path_parse_result;
     }
 
     *path_spec = new_path_spec;
@@ -505,32 +505,32 @@ static int parse_path(struct path_spec **path_spec, const char *path) {
     return 0;
 }
 
-static void cleanup_on_exit_cb() {
-    if (NULL != repo) {
-        git_repository_free(repo);
+static void grofs_cleanup_on_exit_cb() {
+    if (NULL != grofs_repo) {
+        git_repository_free(grofs_repo);
 
-        repo = NULL;
+        grofs_repo = NULL;
     }
 
     git_libgit2_shutdown();
 
-    if (NULL != repo_path) {
-        free(repo_path);
+    if (NULL != grofs_repo_path) {
+        free(grofs_repo_path);
 
-        repo_path = NULL;
+        grofs_repo_path = NULL;
     }
 
-    if (args.argc > 0) {
-        fuse_opt_free_args(&args);
+    if (grofs_args.argc > 0) {
+        fuse_opt_free_args(&grofs_args);
     }
 }
 
-static int fuse_args_process_cb(void *data, const char *arg, int key, struct fuse_args *out_args) {
+static int grofs_fuse_args_process_cb(void *data, const char *arg, int key, struct fuse_args *out_args) {
     (void) data;
     (void) out_args;
 
-    if (FUSE_OPT_KEY_NONOPT == key && NULL == repo_path) {
-        repo_path = strdup(arg);
+    if (FUSE_OPT_KEY_NONOPT == key && NULL == grofs_repo_path) {
+        grofs_repo_path = strdup(arg);
 
         return 0;
     }
@@ -556,7 +556,7 @@ static void grofs_getattr_init_stat_as_file(struct stat *stat, time_t started_ti
 static int grofs_git_commit_parent_lookup(const git_oid *commit_oid, git_oid *parent_oid) {
     git_commit *commit;
 
-    if (git_commit_lookup(&commit, repo, commit_oid) != 0) {
+    if (git_commit_lookup(&commit, grofs_repo, commit_oid) != 0) {
         return 1;
     }
 
@@ -579,7 +579,7 @@ static int grofs_git_commit_has_parent(const git_oid *commit_oid) {
     return grofs_git_commit_parent_lookup(commit_oid, &oid) == 0;
 }
 
-static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_node *node, const git_commit *commit, const struct path_spec *path_spec) {
+static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_node *node, const git_commit *commit, const struct grofs_path_spec *path_spec) {
     node->time = git_commit_time(commit);
 
     if (ID == path_spec->entry_type) {
@@ -622,7 +622,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
 
     git_tree_entry *tree_entry;
 
-    char *path = path_spec_git_path(path_spec);
+    char *path = grofs_path_spec_git_path(path_spec);
 
     if (NULL == path) {
         git_tree_free(tree);
@@ -652,14 +652,14 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
             node->type = DATA;
 
             git_blob *blob;
-            git_blob_lookup(&blob, repo, git_tree_entry_id(tree_entry));
+            git_blob_lookup(&blob, grofs_repo, git_tree_entry_id(tree_entry));
 
             node->size = git_blob_rawsize(blob);
 
             git_blob_free(blob);
             break;
         default:
-            HALT_FMT("Unexpected %s (sha1 %s)", git_object_type2string(git_tree_entry_type(tree_entry)), git_oid_tostr_s(git_tree_entry_id(tree_entry)));
+            GROFS_HALT_FMT("Unexpected %s (sha1 %s)", git_object_type2string(git_tree_entry_type(tree_entry)), git_oid_tostr_s(git_tree_entry_id(tree_entry)));
     }
 
     git_tree_entry_free(tree_entry);
@@ -669,14 +669,14 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
     return 0;
 }
 
-static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *node, const struct path_spec *path_spec) {
+static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *node, const struct grofs_path_spec *path_spec) {
     const char *id = path_spec_commit_name(path_spec);
 
     git_commit *commit;
 
     git_oid_fromstr(&node->oid, id);
 
-    if (0 != git_commit_lookup(&commit, repo, &node->oid)) {
+    if (0 != git_commit_lookup(&commit, grofs_repo, &node->oid)) {
         return ENOENT;
     }
 
@@ -687,16 +687,16 @@ static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *n
     return ret;
 }
 
-static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *node, const struct path_spec *path_spec) {
+static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *node, const struct grofs_path_spec *path_spec) {
     if (ID != path_spec->entry_type) {
         return ENOENT;
     }
 
     git_oid oid;
-    git_oid_fromstr(&oid, path_spec_blob_name(path_spec));
+    git_oid_fromstr(&oid, grofs_path_spec_blob_name(path_spec));
 
     git_blob *blob;
-    git_blob_lookup(&blob, repo, &oid);
+    git_blob_lookup(&blob, grofs_repo, &oid);
 
     git_oid_cpy(&node->oid, &oid);
 
@@ -709,7 +709,7 @@ static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *nod
     return 0;
 }
 
-static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec) {
+static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct grofs_path_spec *path_spec) {
     int ret = ENOENT;
 
     if (ROOT == path_spec->root_child_type || LIST == path_spec->entry_type) {
@@ -728,16 +728,16 @@ static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struc
 
             break;
         default:
-            HALT_FMT("Unexpected %s for path %s", root_child_type_to_str(path_spec->root_child_type), path_spec_full_path(path_spec));
+            GROFS_HALT_FMT("Unexpected %s for path %s", grofs_root_child_type_to_str(path_spec->root_child_type), grofs_path_spec_full_path(path_spec));
     }
 
     return ret;
 }
 
 static int grofs_node_init_from_path(struct grofs_node *node, const char *path) {
-    struct path_spec *path_spec;
+    struct grofs_path_spec *path_spec;
 
-    int ret = parse_path(&path_spec, path);
+    int ret = grofs_parse_path(&path_spec, path);
 
     if (ret != 0) {
         return ret;
@@ -746,11 +746,11 @@ static int grofs_node_init_from_path(struct grofs_node *node, const char *path) 
     node->root_child_type = path_spec->root_child_type;
     node->entry_type = path_spec->entry_type;
     node->size = 0;
-    node->time = started_time;
+    node->time = grofs_started_time;
 
     ret = grofs_resolve_node_for_path_spec(node, path_spec);
 
-    free_path_spec(path_spec);
+    grofs_free_path_spec(path_spec);
 
     return ret;
 }
@@ -776,7 +776,7 @@ static int grofs_resolve_node_for_path(struct grofs_node **node, const char *pat
 }
 
 static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
-    if (*should_stop_local) {
+    if (*grofs_should_stop_local) {
         return ECANCELED;
     }
 
@@ -791,7 +791,7 @@ static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
 
 // Returns negative because of https://github.com/libgit2/libgit2/issues/4946
 static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload) {
-    if (*should_stop_local) {
+    if (*grofs_should_stop_local) {
         return -ECANCELED;
     }
 
@@ -799,7 +799,7 @@ static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload)
 
     struct grofs_readdir_context *context = (struct grofs_readdir_context *) payload;
 
-    if (0 != git_object_lookup(&obj, repo, id, context->wanted_type)) {
+    if (0 != git_object_lookup(&obj, grofs_repo, id, context->wanted_type)) {
         return 0;
     }
 
@@ -817,19 +817,19 @@ static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload)
 static void grofs_dir_iter_root(int fd, void *iter_payload) {
     (void) iter_payload;
 
-    if (grofs_write_bin_with_local_cancel(fd, STR_COMMITS)) {
+    if (grofs_write_bin_with_local_cancel(fd, GROFS_STR_COMMITS)) {
         return ;
     }
-    if (grofs_write_bin_with_local_cancel(fd, STR_BLOBS)) {
+    if (grofs_write_bin_with_local_cancel(fd, GROFS_STR_BLOBS)) {
         return ;
     }
 }
 
 static void grofs_dir_iter_commit_id(int fd, void *iter_payload) {
-    grofs_write_bin_with_local_cancel(fd, STR_TREE);
+    grofs_write_bin_with_local_cancel(fd, GROFS_STR_TREE);
 
     if (grofs_git_commit_has_parent((git_oid *) iter_payload)) {
-        grofs_write_bin_with_local_cancel(fd, STR_PARENT);
+        grofs_write_bin_with_local_cancel(fd, GROFS_STR_PARENT);
     }
 }
 
@@ -842,7 +842,7 @@ static void grofs_dir_iter_commit_list(int fd, void *iter_payload) {
     };
 
     git_odb *odb;
-    git_repository_odb(&odb, repo);
+    git_repository_odb(&odb, grofs_repo);
 
     git_odb_foreach(odb, grofs_readdir_git_collect_object_cb, &context);
 
@@ -858,7 +858,7 @@ static void grofs_dir_iter_for_blob_list(int fd, void *iter_payload) {
     };
 
     git_odb *odb;
-    git_repository_odb(&odb, repo);
+    git_repository_odb(&odb, grofs_repo);
 
     git_odb_foreach(odb, grofs_readdir_git_collect_object_cb, &context);
 
@@ -895,7 +895,7 @@ static void grofs_dir_iter_for_blob_list_tree(int fd, void *iter_payload) {
 
 static void grofs_dir_iter_for_blob_list_tree_oid(int fd, void *iter_payload) {
     git_tree *tree;
-    if (git_tree_lookup(&tree, repo, (git_oid *) iter_payload) != 0) {
+    if (git_tree_lookup(&tree, grofs_repo, (git_oid *) iter_payload) != 0) {
         return ;
     }
 
@@ -907,7 +907,7 @@ static void grofs_dir_iter_for_blob_list_tree_oid(int fd, void *iter_payload) {
 static void *grofs_readdir_thread(void *data) {
     struct grofs_readdir_thread_data *thread_data = (struct grofs_readdir_thread_data *) data;
 
-    should_stop_local = &thread_data->should_stop;
+    grofs_should_stop_local = &thread_data->should_stop;
 
     if (grofs_write_bin_with_local_cancel(thread_data->fd, ".")) {
         close(thread_data->fd);
@@ -1052,7 +1052,7 @@ static int grofs_fill_from_dir_handle(struct grofs_dir_handle *dir_handle, void 
         }
 
         if (start == buff->pos) {
-            HALT("Unexpected empty line");
+            GROFS_HALT("Unexpected empty line");
         }
 
         size_t new_offset = dir_handle->last_offset + start - buff->pos;
@@ -1149,7 +1149,7 @@ static int grofs_open_node_commit_parent(const git_oid *oid, struct fuse_file_in
 static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_info) {
     git_blob *blob;
 
-    if (git_blob_lookup(&blob, repo, oid) != 0) {
+    if (git_blob_lookup(&blob, grofs_repo, oid) != 0) {
         return ENOENT;
     }
 
@@ -1207,7 +1207,7 @@ static int grofs_getattr(const char *path, struct stat *stat) {
 
             break;
         default:
-        HALT_FMT("Unexpected %s for path %s", grofs_node_type_to_str(node->type), path);
+        GROFS_HALT_FMT("Unexpected %s for path %s", grofs_node_type_to_str(node->type), path);
     }
 
     free(node);
@@ -1336,7 +1336,7 @@ static int grofs_read(const char *path, char *buff, size_t size, off_t offset, s
         return 0;
     }
 
-    int to_read = min(size, file_handle->len - offset);
+    int to_read = grofs_min(size, file_handle->len - offset);
 
     memcpy(buff, file_handle->buff + offset, sizeof(char) * to_read);
 
@@ -1366,58 +1366,58 @@ static void grofs_print_help(const char *bin_path) {
 }
 
 int main(int argc, char **argv) {
-    started_time = time(NULL);
+    grofs_started_time = time(NULL);
 
     git_libgit2_init();
 
-    atexit(cleanup_on_exit_cb);
+    atexit(grofs_cleanup_on_exit_cb);
 
-    args.argc = argc;
-    args.argv = argv;
-    args.allocated = 0;
+    grofs_args.argc = argc;
+    grofs_args.argv = argv;
+    grofs_args.allocated = 0;
 
     struct grofs_cli_opts cli_opts = {
         .show_version = 0,
         .show_help = 0
     };
 
-    if(fuse_opt_parse(&args, &cli_opts, grofs_fuse_opts, fuse_args_process_cb) == -1) {
+    if(fuse_opt_parse(&grofs_args, &cli_opts, grofs_fuse_opts, grofs_fuse_args_process_cb) == -1) {
         fprintf(stderr, "Failed to parse options");
 
         return 1;
     }
 
     if (cli_opts.show_help) {
-        grofs_print_help(args.argv[0]);
+        grofs_print_help(grofs_args.argv[0]);
 
-        fuse_opt_add_arg(&args, "-ho");
+        fuse_opt_add_arg(&grofs_args, "-ho");
 
-        return fuse_main(args.argc, args.argv, &fuse_operations, NULL);
+        return fuse_main(grofs_args.argc, grofs_args.argv, &grofs_fuse_operations, NULL);
     }
 
     if (cli_opts.show_version) {
-        fprintf(stderr, "grofs version: %s\n", VERSION);
+        fprintf(stderr, "grofs version: %s\n", GROFS_VERSION);
 
-        fuse_opt_add_arg(&args, "--version");
+        fuse_opt_add_arg(&grofs_args, "--version");
 
-        return fuse_main(args.argc, args.argv, &fuse_operations, NULL);
+        return fuse_main(grofs_args.argc, grofs_args.argv, &grofs_fuse_operations, NULL);
     }
 
-    if (NULL == repo_path) {
+    if (NULL == grofs_repo_path) {
         fprintf(stderr, "Git repository path not provided\n\n");
 
-        grofs_print_help(args.argv[0]);
+        grofs_print_help(grofs_args.argv[0]);
 
         return 1;
     }
 
-    int error = git_repository_open(&repo, repo_path);
+    int error = git_repository_open(&grofs_repo, grofs_repo_path);
 
     if (0 != error) {
-        fprintf(stderr, "Failed to find Git repository at path: %s\n", repo_path);
+        fprintf(stderr, "Failed to find Git repository at path: %s\n", grofs_repo_path);
 
         return 1;
     }
 
-    return fuse_main(args.argc, args.argv, &fuse_operations, NULL);
+    return fuse_main(grofs_args.argc, grofs_args.argv, &grofs_fuse_operations, NULL);
 }
