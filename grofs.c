@@ -10,6 +10,7 @@
 #include <pthread.h>
 #include <threads.h>
 #include <fcntl.h>
+#include <errno.h>
 
 #define FUSE_USE_VERSION 30
 
@@ -29,6 +30,8 @@
 // Halts in case of a logic error because it's better to exit since we don't know what else could be wrong
 #define HALT_FMT(fmt, ...) fprintf(stderr, "ERROR [file: %s, line: %d]: " fmt, __FILE__, __LINE__, __VA_ARGS__); exit(LOGIC_ERROR)
 #define HALT(fmt) HALT_FMT(fmt "%s", "")
+
+#define FUSE_ERR(r) -(r)
 
 enum dir_entry_type {
     NONE, LIST, ID, PATH_IN_GIT, TREE, PARENT
@@ -136,26 +139,26 @@ static void *grofs_readdir_thread(void *data);
 static int grofs_open_dir_create_thread_data(struct grofs_readdir_thread_data *thread_data, const struct grofs_node *node);
 static int grofs_spawn_read_thread(struct grofs_dir_handle *dir_handle);
 static int grofs_opendir_create_dir_handle_from_node(struct grofs_dir_handle **dir_handle, struct grofs_node *node);
-static int grofs_opendir(const char *path, struct fuse_file_info *file_info);
 static int grofs_fill_from_dir_handle(struct grofs_dir_handle *dir_handle, void *buffer, fuse_fill_dir_t filler);
 static void grofs_buff_align_to_start(struct grofs_buff *buff);
 static int grofs_buff_realloc(struct grofs_buff *buff);
 static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec);
 static int grofs_resolve_node_for_path(struct grofs_node **node, const char *path);
-static int grofs_getattr(const char *path, struct stat *stat);
 static int grofs_readdir_git_collect_object_cb(const git_oid *id, void *payload);
 static struct grofs_file_handle *grofs_file_nandle_new(int buff_len);
 static int grofs_open_node_commit_parent(const git_oid *oid, struct fuse_file_info * file_info);
 static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_info);
 static int grofs_open_node(const struct grofs_node *node, struct fuse_file_info *file_info);
-static int grofs_open(const char *path, struct fuse_file_info *file_info);
 static void grofs_releasedir_close_thread(int read_fd, pthread_t read_thr, struct grofs_readdir_thread_data *thread_data);
-static int grofs_read(const char *path, char *buff, size_t size, off_t offset, struct fuse_file_info *file_info);
+static void grofs_print_help(const char *bin_path);
+
+static int grofs_getattr(const char *path, struct stat *stat);
 static int grofs_opendir(const char *path, struct fuse_file_info *file_info);
 static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *file_info);
 static int grofs_releasedir(const char *path, struct fuse_file_info *file_info);
+static int grofs_open(const char *path, struct fuse_file_info *file_info);
+static int grofs_read(const char *path, char *buff, size_t size, off_t offset, struct fuse_file_info *file_info);
 static int grofs_release(const char* path, struct fuse_file_info *file_info);
-static void grofs_print_help(const char *bin_path);
 
 static char *repo_path = NULL;
 static git_repository *repo = NULL;
@@ -588,7 +591,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
     git_tree *tree;
 
     if (git_commit_tree(&tree, commit) != 0) {
-        return -ENOENT;
+        return ENOENT;
     }
 
     if (TREE == path_spec->entry_type) {
@@ -604,7 +607,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
     if (PARENT == path_spec->entry_type) {
         git_oid parent_oid;
         if (grofs_git_commit_parent_lookup(git_commit_id(commit), &parent_oid) != 0) {
-            return -ENOENT;
+            return ENOENT;
         }
 
         git_oid_cpy(&node->oid, &parent_oid);
@@ -624,7 +627,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
     if (NULL == path) {
         git_tree_free(tree);
 
-        return -ENOENT;
+        return ENOENT;
     }
 
     if (git_tree_entry_bypath(&tree_entry, tree, path + 1) != 0) {
@@ -632,7 +635,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_children(struct grofs_nod
 
         git_tree_free(tree);
 
-        return -ENOENT;
+        return ENOENT;
     }
 
     free(path);
@@ -674,7 +677,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *n
     git_oid_fromstr(&node->oid, id);
 
     if (0 != git_commit_lookup(&commit, repo, &node->oid)) {
-        return -ENOENT;
+        return ENOENT;
     }
 
     int ret = grofs_resolve_node_for_path_spec_for_commit_children(node, commit, path_spec);
@@ -686,7 +689,7 @@ static int grofs_resolve_node_for_path_spec_for_commit_type(struct grofs_node *n
 
 static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *node, const struct path_spec *path_spec) {
     if (ID != path_spec->entry_type) {
-        return -ENOENT;
+        return ENOENT;
     }
 
     git_oid oid;
@@ -707,7 +710,7 @@ static int grofs_resolve_node_for_path_spec_for_blob_type(struct grofs_node *nod
 }
 
 static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struct path_spec *path_spec) {
-    int ret = -ENOENT;
+    int ret = ENOENT;
 
     if (ROOT == path_spec->root_child_type || LIST == path_spec->entry_type) {
         node->type = DIR;
@@ -734,7 +737,7 @@ static int grofs_resolve_node_for_path_spec(struct grofs_node *node, const struc
 static int grofs_node_init_from_path(struct grofs_node *node, const char *path) {
     struct path_spec *path_spec;
 
-    int ret = -parse_path(&path_spec, path);
+    int ret = parse_path(&path_spec, path);
 
     if (ret != 0) {
         return ret;
@@ -756,7 +759,7 @@ static int grofs_resolve_node_for_path(struct grofs_node **node, const char *pat
     struct grofs_node *new_node = (struct grofs_node *) malloc(sizeof(struct grofs_node));
 
     if (NULL == new_node) {
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     int ret = grofs_node_init_from_path(new_node, path);
@@ -772,39 +775,6 @@ static int grofs_resolve_node_for_path(struct grofs_node **node, const char *pat
     return ret;
 }
 
-static int grofs_getattr(const char *path, struct stat *stat) {
-    struct fuse_context *fuse_context = fuse_get_context();
-
-    struct grofs_node *node;
-
-    int ret = grofs_resolve_node_for_path(&node, path);
-
-    if (0 != ret) {
-        return ret;
-    }
-
-    // @todo: remote globals through fuse data
-    stat->st_uid = fuse_context->uid;
-    stat->st_gid = fuse_context->gid;
-
-    switch (node->type) {
-        case DATA:
-            grofs_getattr_init_stat_as_file(stat, node->time, node->size);
-
-            break;
-        case DIR:
-            grofs_getattr_init_stat_as_dir(stat, node->time);
-
-            break;
-        default:
-            HALT_FMT("Unexpected %s for path %s", grofs_node_type_to_str(node->type), path);
-    }
-
-    free(node);
-
-    return ret;
-}
-
 static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
     if (*should_stop_local) {
         return ECANCELED;
@@ -813,7 +783,7 @@ static int grofs_write_bin_with_local_cancel(int fd, const char *data) {
     int ret = write(fd, data, strlen(data) + 1);
 
     if (ret < 0) {
-        return ret;
+        return errno;
     }
 
     return 0;
@@ -977,7 +947,7 @@ static int grofs_open_dir_create_thread_data(struct grofs_readdir_thread_data *t
         git_oid *oid = (git_oid *) malloc(sizeof(git_oid));
 
         if (NULL == oid) {
-            return -ENOMEM;
+            return ENOMEM;
         }
 
         git_oid_cpy(oid, &node->oid);
@@ -994,7 +964,7 @@ static int grofs_open_dir_create_thread_data(struct grofs_readdir_thread_data *t
         git_oid *oid = (git_oid *) malloc(sizeof(git_oid));
 
         if (NULL == oid) {
-            return -ENOMEM;
+            return ENOMEM;
         }
 
         git_oid_cpy(oid, &node->oid);
@@ -1005,7 +975,7 @@ static int grofs_open_dir_create_thread_data(struct grofs_readdir_thread_data *t
         return 0;
     }
 
-    return -ENOENT;
+    return ENOENT;
 }
 
 static int grofs_spawn_read_thread(struct grofs_dir_handle *dir_handle) {
@@ -1035,7 +1005,7 @@ static int grofs_opendir_create_dir_handle_from_node(struct grofs_dir_handle **d
     struct grofs_dir_handle *new_dir_handle = (struct grofs_dir_handle *) malloc(sizeof(struct grofs_dir_handle));
 
     if (NULL == new_dir_handle) {
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     new_dir_handle->buff.data = (char *) malloc(sizeof(char) * GROFS_READDIR_BUFF_LEN);
@@ -1043,7 +1013,7 @@ static int grofs_opendir_create_dir_handle_from_node(struct grofs_dir_handle **d
     if (NULL == new_dir_handle->buff.data) {
         free(new_dir_handle);
 
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     new_dir_handle->buff.len = 0;
@@ -1065,34 +1035,6 @@ static int grofs_opendir_create_dir_handle_from_node(struct grofs_dir_handle **d
     }
 
     free(new_dir_handle);
-
-    return ret;
-}
-
-static int grofs_opendir(const char *path, struct fuse_file_info *file_info) {
-    struct grofs_node *node;
-
-    int ret = grofs_resolve_node_for_path(&node, path);
-
-    if (0 != ret) {
-        return ret;
-    }
-
-    if (DATA == node->type) {
-        free(node);
-
-        return -ENOTDIR;
-    }
-
-    struct grofs_dir_handle *dir_handle;
-
-    ret = grofs_opendir_create_dir_handle_from_node(&dir_handle, node);
-
-    free(node);
-
-    if (0 == ret) {
-        file_info->fh = (uint64_t) dir_handle;
-    }
 
     return ret;
 }
@@ -1149,51 +1091,13 @@ static int grofs_buff_realloc(struct grofs_buff *buff) {
     char *new_buff = (char *) realloc(buff->data, new_size);
 
     if (NULL == new_buff) {
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     buff->data = new_buff;
     buff->size = new_size;
 
     return 0;
-}
-
-static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *file_info) {
-    (void) path;
-
-    struct grofs_dir_handle *dir_handle = (struct grofs_dir_handle *) file_info->fh;
-
-    if (dir_handle->last_offset != offset) {
-        return -EBADF;
-    }
-
-    struct grofs_buff *buff = &dir_handle->buff;
-
-    int ret = 0;
-
-    do {
-        if (grofs_fill_from_dir_handle(dir_handle, buffer, filler)) {
-            return 0;
-        }
-
-        grofs_buff_align_to_start(buff);
-
-        ret = grofs_buff_realloc(buff);
-
-        if (ret) {
-            return ret;
-        }
-
-        ret = read(dir_handle->fd, buff->data + buff->len, sizeof(char) * GROFS_READDIR_BUFF_LEN);
-
-        if (ret < 0) {
-            break;
-        }
-
-        buff->len += ret;
-    } while(ret > 0);
-
-    return ret;
 }
 
 static void grofs_releasedir_close_thread(int read_fd, pthread_t read_thr, struct grofs_readdir_thread_data *thread_data) {
@@ -1207,28 +1111,6 @@ static void grofs_releasedir_close_thread(int read_fd, pthread_t read_thr, struc
     while (read(read_fd, buff, 4096) > 0);
 
     pthread_join(read_thr, NULL);
-}
-
-static int grofs_releasedir(const char *path, struct fuse_file_info *file_info) {
-    (void) path;
-
-    struct grofs_dir_handle *dir_handle = (struct grofs_dir_handle *) file_info->fh;
-
-    if (NULL != dir_handle->thread_data.iter_payload) {
-        free(dir_handle->thread_data.iter_payload);
-    }
-
-    if (NULL != dir_handle->buff.data) {
-        free(dir_handle->buff.data);
-    }
-
-    grofs_releasedir_close_thread(dir_handle->fd, dir_handle->read_thr, &dir_handle->thread_data);
-
-    close(dir_handle->fd);
-
-    free(dir_handle);
-
-    return 0;
 }
 
 static struct grofs_file_handle *grofs_file_nandle_new(int buff_len) {
@@ -1254,7 +1136,7 @@ static int grofs_open_node_commit_parent(const git_oid *oid, struct fuse_file_in
     struct grofs_file_handle *file_handle = grofs_file_nandle_new(GIT_OID_HEXSZ);
 
     if (NULL == file_handle) {
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     git_oid_nfmt(file_handle->buff, GIT_OID_HEXSZ, oid);
@@ -1268,7 +1150,7 @@ static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_
     git_blob *blob;
 
     if (git_blob_lookup(&blob, repo, oid) != 0) {
-        return -ENOENT;
+        return ENOENT;
     }
 
     int size = git_blob_rawsize(blob);
@@ -1276,7 +1158,7 @@ static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_
     struct grofs_file_handle *file_handle = grofs_file_nandle_new(size);
 
     if (NULL == file_handle) {
-        return -ENOMEM;
+        return ENOMEM;
     }
 
     memcpy(file_handle->buff, git_blob_rawcontent(blob), size);
@@ -1297,31 +1179,152 @@ static int grofs_open_node(const struct grofs_node *node, struct fuse_file_info 
         return grofs_open_node_blob(&node->oid, file_info);
     }
 
-    return -ENOENT;
+    return ENOENT;
+}
+
+static int grofs_getattr(const char *path, struct stat *stat) {
+    struct fuse_context *fuse_context = fuse_get_context();
+
+    struct grofs_node *node;
+
+    int ret = grofs_resolve_node_for_path(&node, path);
+
+    if (0 != ret) {
+        return FUSE_ERR(ret);
+    }
+
+    // @todo: remote globals through fuse data
+    stat->st_uid = fuse_context->uid;
+    stat->st_gid = fuse_context->gid;
+
+    switch (node->type) {
+        case DATA:
+            grofs_getattr_init_stat_as_file(stat, node->time, node->size);
+
+            break;
+        case DIR:
+            grofs_getattr_init_stat_as_dir(stat, node->time);
+
+            break;
+        default:
+        HALT_FMT("Unexpected %s for path %s", grofs_node_type_to_str(node->type), path);
+    }
+
+    free(node);
+
+    return FUSE_ERR(ret);
+}
+
+static int grofs_opendir(const char *path, struct fuse_file_info *file_info) {
+    struct grofs_node *node;
+
+    int ret = grofs_resolve_node_for_path(&node, path);
+
+    if (0 != ret) {
+        return FUSE_ERR(ret);
+    }
+
+    if (DATA == node->type) {
+        free(node);
+
+        return FUSE_ERR(ENOTDIR);
+    }
+
+    struct grofs_dir_handle *dir_handle;
+
+    ret = grofs_opendir_create_dir_handle_from_node(&dir_handle, node);
+
+    free(node);
+
+    if (0 == ret) {
+        file_info->fh = (uint64_t) dir_handle;
+    }
+
+    return FUSE_ERR(ret);
+}
+
+static int grofs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *file_info) {
+    (void) path;
+
+    struct grofs_dir_handle *dir_handle = (struct grofs_dir_handle *) file_info->fh;
+
+    if (dir_handle->last_offset != offset) {
+        return FUSE_ERR(EBADF);
+    }
+
+    struct grofs_buff *buff = &dir_handle->buff;
+
+    int ret = 0;
+
+    do {
+        if (grofs_fill_from_dir_handle(dir_handle, buffer, filler)) {
+            return 0;
+        }
+
+        grofs_buff_align_to_start(buff);
+
+        ret = grofs_buff_realloc(buff);
+
+        if (ret) {
+            return FUSE_ERR(ret);
+        }
+
+        ret = read(dir_handle->fd, buff->data + buff->len, sizeof(char) * GROFS_READDIR_BUFF_LEN);
+
+        if (ret < 0) {
+            return FUSE_ERR(errno);
+        }
+
+        buff->len += ret;
+    } while(ret > 0);
+
+    return 0;
+}
+
+static int grofs_releasedir(const char *path, struct fuse_file_info *file_info) {
+    (void) path;
+
+    struct grofs_dir_handle *dir_handle = (struct grofs_dir_handle *) file_info->fh;
+
+    if (NULL != dir_handle->thread_data.iter_payload) {
+        free(dir_handle->thread_data.iter_payload);
+    }
+
+    if (NULL != dir_handle->buff.data) {
+        free(dir_handle->buff.data);
+    }
+
+    grofs_releasedir_close_thread(dir_handle->fd, dir_handle->read_thr, &dir_handle->thread_data);
+
+    close(dir_handle->fd);
+
+    free(dir_handle);
+
+    return 0;
 }
 
 static int grofs_open(const char *path, struct fuse_file_info *file_info) {
     if (file_info->flags & (O_WRONLY | O_RDWR)) {
-        return -EROFS;
+        return FUSE_ERR(EROFS);
     }
 
     struct grofs_node *node;
 
     if (grofs_resolve_node_for_path(&node, path) != 0) {
-        return -ENOENT;
+        return FUSE_ERR(ENOENT);
     }
 
-    int ret = -ENOENT;
+    int ret = FUSE_ERR(ENOENT);
 
     if (DIR == node->type) {
-        ret = -EISDIR;
+        ret = FUSE_ERR(EISDIR);
     } else if (DATA == node->type) {
         ret = grofs_open_node(node, file_info);
     }
 
     free(node);
 
-    return ret;
+    return FUSE_ERR(ret);
 }
 
 static int grofs_read(const char *path, char *buff, size_t size, off_t offset, struct fuse_file_info *file_info) {
