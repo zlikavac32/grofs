@@ -1234,6 +1234,10 @@ static int grofs_releasedir(const char *path, struct fuse_file_info *file_info) 
 static struct grofs_file_handle *grofs_file_nandle_new(int buff_len) {
     void *buff = malloc(sizeof(struct grofs_file_handle) + sizeof(char) * buff_len);
 
+    if (NULL == buff) {
+        return NULL;
+    }
+
     struct grofs_file_handle *file_handle = (struct grofs_file_handle *) buff;
 
     file_handle->buff = buff + sizeof(struct grofs_file_handle);
@@ -1248,6 +1252,10 @@ static void grofs_file_handle_free(struct grofs_file_handle *file_handle) {
 
 static int grofs_open_node_commit_parent(const git_oid *oid, struct fuse_file_info * file_info) {
     struct grofs_file_handle *file_handle = grofs_file_nandle_new(GIT_OID_HEXSZ);
+
+    if (NULL == file_handle) {
+        return -ENOMEM;
+    }
 
     git_oid_nfmt(file_handle->buff, GIT_OID_HEXSZ, oid);
 
@@ -1266,6 +1274,10 @@ static int grofs_open_node_blob(const git_oid *oid, struct fuse_file_info *file_
     int size = git_blob_rawsize(blob);
 
     struct grofs_file_handle *file_handle = grofs_file_nandle_new(size);
+
+    if (NULL == file_handle) {
+        return -ENOMEM;
+    }
 
     memcpy(file_handle->buff, git_blob_rawcontent(blob), size);
 
