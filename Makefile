@@ -17,10 +17,10 @@ clean:
 	rm -f $(OBJ) $(BIN)
 
 .PHONY: install
-install: grofs
+install: $(BIN)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin
-	cp $(BIN) $(DESTDIR)$(PREFIX)/bin/grofs
+	cp $(BIN) $(DESTDIR)$(PREFIX)/bin/$(BIN)
 
 .PHONY: uninstall
 uninstall:
-	rm -f $(DESTDIR)$(PREFIX)/bin/grofs
+	rm -f $(DESTDIR)$(PREFIX)/bin/$(BIN)
